@@ -1,7 +1,11 @@
 #!/bin/bash
-
+# shellcheck disable=SC1091
 # Send message to Claude agent in tmux window
 # Usage: send-claude-message.sh <session:window> <message>
+
+# Load environment variables
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/load_env.sh"
 
 if [ $# -lt 2 ]; then
     echo "Usage: $0 <session:window> <message>"
@@ -16,8 +20,8 @@ MESSAGE="$*"
 # Send the message
 tmux send-keys -t "$WINDOW" "$MESSAGE"
 
-# Wait 0.5 seconds for UI to register
-sleep 0.5
+# Wait for UI to register (configurable delay)
+sleep "${MESSAGE_DELAY:-0.5}"
 
 # Send Enter to submit
 tmux send-keys -t "$WINDOW" Enter

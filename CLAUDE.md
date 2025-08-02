@@ -3,6 +3,41 @@
 ## Project Overview
 The Tmux Orchestrator is an AI-powered session management system where Claude acts as the orchestrator for multiple Claude agents across tmux sessions, managing codebases and keeping development moving forward 24/7.
 
+## Dynamic Claude Command System
+
+### Overview
+The orchestrator uses a dynamic command system to always use the latest available Claude version without hardcoding paths or versions.
+
+### Key Components
+1. **get_claude_command.sh**: Finds the best available Claude installation
+   - Prioritizes local installation (~/.claude/local)
+   - Falls back to global npm or system PATH
+   - Returns both command path and version
+
+2. **start_claude.sh**: Wrapper script to start Claude in tmux windows
+   - Uses get_claude_command.sh to find Claude
+   - Prevents accidental double-starts
+   - Provides consistent startup interface
+
+### Usage Examples
+```bash
+# Get Claude command dynamically
+CLAUDE_CMD=$(./get_claude_command.sh)
+
+# Start Claude in a tmux window
+./start_claude.sh session:window
+
+# Use in scripts
+source ./get_claude_command.sh
+echo "Using Claude v$CLAUDE_VERSION at $CLAUDE_COMMAND"
+```
+
+### Benefits
+- No hardcoded paths or versions
+- Automatically uses latest available version
+- Works across different installation methods
+- Consistent interface for all scripts
+
 ## Agent System Architecture
 
 ### Orchestrator Role
@@ -171,8 +206,9 @@ tmux new-window -t $PROJECT_NAME -n "Dev-Server" -c "$PROJECT_PATH"
 
 #### 4. Brief the Claude Agent
 ```bash
-# Send briefing message to Claude agent
-tmux send-keys -t $PROJECT_NAME:0 "claude" Enter
+# Start Claude using the dynamic command finder
+# This ensures we always use the latest available version
+./start_claude.sh $PROJECT_NAME:0
 sleep 5  # Wait for Claude to start
 
 # Send the briefing
@@ -261,7 +297,7 @@ tmux new-window -t task-templates -n "Shell" -c "/Users/jasonedward/Coding/task-
 tmux new-window -t task-templates -n "Dev-Server" -c "/Users/jasonedward/Coding/task-templates"
 
 # 4. Start Claude and brief
-tmux send-keys -t task-templates:0 "claude" Enter
+./start_claude.sh task-templates:0
 # ... (briefing as above)
 ```
 
@@ -295,8 +331,8 @@ tmux new-window -t [session] -n "Project-Manager" -c "$PROJECT_PATH"
 
 #### 3. Start and Brief the PM
 ```bash
-# Start Claude
-tmux send-keys -t [session]:[PM-window] "claude" Enter
+# Start Claude using dynamic command
+./start_claude.sh [session]:[PM-window]
 sleep 5
 
 # Send PM-specific briefing
@@ -656,8 +692,8 @@ When a command fails:
 
 ##### 1. Starting Claude and Initial Briefing
 ```bash
-# Start Claude first
-tmux send-keys -t project:0 "claude" Enter
+# Start Claude first using dynamic command
+./start_claude.sh project:0
 sleep 5
 
 # Then use the script for the briefing

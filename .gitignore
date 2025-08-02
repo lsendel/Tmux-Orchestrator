@@ -1,0 +1,36 @@
+# Environment variables
+.env
+.env.local
+
+# Registry and logs
+registry/
+next_check_note.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+*.bak
+*.backup
+*.tmp
+
+# Session files
+*.log
+*.pid

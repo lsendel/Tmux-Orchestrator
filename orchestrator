@@ -1,0 +1,211 @@
+#!/bin/bash
+# Tmux Orchestrator CLI
+# Main entry point for orchestrator management
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+show_help() {
+    cat << EOF
+🎯 Tmux Orchestrator - AI Agent Coordination System
+
+Usage: orchestrator <command> [options]
+
+Commands:
+  start <project>     Start a new project with Claude agent
+  status              Show status of all active sessions
+  status detailed     Show detailed status with agent health
+  stop <session>      Stop a tmux session
+  deploy <session>    Deploy a project manager to a session
+  message <target>    Send a message to a Claude agent
+  schedule <min>      Schedule a check-in after N minutes
+  list                List all projects in ~/Coding
+  health              Run system health checks
+  help                Show this help message
+
+Examples:
+  orchestrator start task-templates
+  orchestrator deploy my-project
+  orchestrator message my-project:0 "What's your status?"
+  orchestrator schedule 30 "Check test results"
+
+Configuration:
+  Projects directory: ~/Coding (or set CODING_DIR environment variable)
+  Registry location: $SCRIPT_DIR/registry/
+
+For more information, see README.md
+EOF
+}
+
+# Function to find projects
+find_projects() {
+    # Read from config.json if exists, otherwise use environment variable or default
+    local config_dir="$HOME/IdeaProjects"
+    if [ -f "$SCRIPT_DIR/config.json" ]; then
+        config_dir=$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/config.json'))['orchestrator']['coding_directory'].replace('~', '$HOME'))" 2>/dev/null) || config_dir="$HOME/IdeaProjects"
+    fi
+    local coding_dir="${CODING_DIR:-$config_dir}"
+    if [ ! -d "$coding_dir" ]; then
+        echo -e "${RED}Error: Coding directory not found at $coding_dir${NC}"
+        echo "Set CODING_DIR environment variable to override"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}Projects in $coding_dir:${NC}"
+    ls -1d "$coding_dir"/*/ 2>/dev/null | xargs -n1 basename | sort
+}
+
+# Start a new project
+start_project() {
+    local project_name="$1"
+    # Read from config.json if exists
+    local config_dir="$HOME/IdeaProjects"
+    if [ -f "$SCRIPT_DIR/config.json" ]; then
+        config_dir=$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/config.json'))['orchestrator']['coding_directory'].replace('~', '$HOME'))" 2>/dev/null) || config_dir="$HOME/IdeaProjects"
+    fi
+    local coding_dir="${CODING_DIR:-$config_dir}"
+    local project_path="$coding_dir/$project_name"
+    
+    if [ -z "$project_name" ]; then
+        echo -e "${RED}Error: Project name required${NC}"
+        echo "Usage: orchestrator start <project-name>"
+        exit 1
+    fi
+    
+    if [ ! -d "$project_path" ]; then
+        echo -e "${RED}Error: Project not found at $project_path${NC}"
+        echo "Available projects:"
+        find_projects
+        exit 1
+    fi
+    
+    # Check if session already exists
+    if tmux has-session -t "$project_name" 2>/dev/null; then
+        echo -e "${YELLOW}Session $project_name already exists${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}Starting project: $project_name${NC}"
+    
+    # Create session with standard windows
+    tmux new-session -d -s "$project_name" -c "$project_path" -n "Claude-Agent"
+    tmux new-window -t "$project_name" -n "Shell" -c "$project_path"
+    tmux new-window -t "$project_name" -n "Dev-Server" -c "$project_path"
+    
+    # Start Claude in first window
+    "$SCRIPT_DIR/start_claude.sh" "$project_name:0"
+    
+    # Brief the agent
+    sleep 5
+    "$SCRIPT_DIR/send-claude-message.sh" "$project_name:0" "You are responsible for the $project_name codebase. Your duties include:
+1. Getting the application running
+2. Checking GitHub issues for priorities  
+3. Working on highest priority tasks
+4. Keeping the orchestrator informed of progress
+
+First, analyze the project to understand what type it is and how to start the dev server."
+    
+    echo -e "${GREEN}✅ Project $project_name started successfully${NC}"
+    echo "Windows created:"
+    echo "  - Claude-Agent (window 0)"
+    echo "  - Shell (window 1)"
+    echo "  - Dev-Server (window 2)"
+}
+
+# Deploy a project manager
+deploy_pm() {
+    local session="$1"
+    
+    if [ -z "$session" ]; then
+        echo -e "${RED}Error: Session name required${NC}"
+        echo "Usage: orchestrator deploy <session>"
+        exit 1
+    fi
+    
+    if ! tmux has-session -t "$session" 2>/dev/null; then
+        echo -e "${RED}Error: Session $session not found${NC}"
+        exit 1
+    fi
+    
+    # Find next available window index
+    local window_count
+    window_count=$(tmux list-windows -t "$session" -F "#{window_index}" | wc -l)
+    
+    echo -e "${GREEN}Deploying Project Manager to $session${NC}"
+    
+    # Get project path from existing window
+    local project_path
+    project_path=$(tmux display-message -t "$session:0" -p '#{pane_current_path}')
+    
+    # Create PM window
+    tmux new-window -t "$session" -n "Project-Manager" -c "$project_path"
+    
+    # Start Claude
+    "$SCRIPT_DIR/start_claude.sh" "$session:$window_count"
+    
+    # Brief the PM
+    sleep 5
+    "$SCRIPT_DIR/send-claude-message.sh" "$session:$window_count" "You are the Project Manager for this project. Your responsibilities:
+1. Quality Standards: Maintain exceptionally high standards
+2. Verification: Test everything thoroughly
+3. Team Coordination: Manage communication efficiently
+4. Progress Tracking: Monitor velocity and report to orchestrator
+5. Risk Management: Identify issues early
+
+Please introduce yourself to the developer in window 0."
+    
+    echo -e "${GREEN}✅ Project Manager deployed to window $window_count${NC}"
+}
+
+# Main command dispatcher
+case "$1" in
+    start)
+        start_project "$2"
+        ;;
+    status)
+        python3 "$SCRIPT_DIR/claude_control.py" status "$2"
+        ;;
+    stop)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Error: Session name required${NC}"
+            exit 1
+        fi
+        tmux kill-session -t "$2"
+        echo -e "${GREEN}Session $2 stopped${NC}"
+        ;;
+    deploy)
+        deploy_pm "$2"
+        ;;
+    message)
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo -e "${RED}Error: Target and message required${NC}"
+            echo "Usage: orchestrator message <target> <message>"
+            exit 1
+        fi
+        "$SCRIPT_DIR/send-claude-message.sh" "$2" "$3"
+        ;;
+    schedule)
+        shift
+        "$SCRIPT_DIR/schedule_with_note.sh" "$@"
+        ;;
+    list)
+        find_projects
+        ;;
+    health)
+        python3 "$SCRIPT_DIR/claude_control.py" health
+        ;;
+    help|--help|-h|"")
+        show_help
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $1${NC}"
+        show_help
+        exit 1
+        ;;
+esac
