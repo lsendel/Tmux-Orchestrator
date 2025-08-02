@@ -1,225 +1,334 @@
 #!/usr/bin/env python3
 """
-Claude Control - Core orchestrator management module
-Handles agent lifecycle, status reporting, and health checks
+Simplified Claude Control - Phase 1 Implementation
+Consolidates 10 classes into 3 main components
 """
 
 import json
+import logging
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 
 
-class ClaudeOrchestrator:
-    """Main orchestrator control class"""
+# Simple constants instead of enum
+class AgentStatus:
+    """Agent status constants"""
+    READY = "ready"
+    BUSY = "busy"
+    ERROR = "error"
+    UNKNOWN = "unknown"
 
-    def __init__(self):
-        self.base_dir = Path(__file__).parent.resolve()
 
-        # Security check - ensure we're in the expected directory
-        if not (self.base_dir / "claude_control.py").exists():
-            raise RuntimeError(
-                "Security check failed: claude_control.py not found in expected location"
-            )
-        self.registry_dir = self.base_dir / "registry"
-        self.registry_dir.mkdir(exist_ok=True)
-        self.sessions_file = self.registry_dir / "sessions.json"
-        self.logs_dir = self.registry_dir / "logs"
-        self.logs_dir.mkdir(exist_ok=True)
+class TmuxClient:
+    """Consolidated tmux operations (merges TmuxCommandExecutor functionality)"""
 
-    def get_active_sessions(self) -> List[Dict]:
-        """Get all active tmux sessions with Claude agents"""
+    @staticmethod
+    def run_command(command: List[str]) -> subprocess.CompletedProcess:
+        """Execute a tmux command safely"""
         try:
-            result = subprocess.run(
-                [
-                    "tmux",
-                    "list-sessions",
-                    "-F",
-                    "#{session_name}:#{session_created}:#{session_windows}",
-                ],
+            return subprocess.run(
+                command,
                 capture_output=True,
                 text=True,
-                check=True,
+                check=True
             )
+        except subprocess.CalledProcessError:
+            logging.debug(f"Command failed: {' '.join(command)}")
+            raise
+
+    @classmethod
+    def get_sessions(cls) -> List[Dict[str, Any]]:
+        """Get all tmux sessions"""
+        try:
+            result = cls.run_command([
+                "tmux", "list-sessions", "-F",
+                "#{session_name}:#{session_created}:#{session_windows}"
+            ])
+
             sessions = []
-            for line in result.stdout.strip().split("\n"):
-                if line:
-                    name, created, windows = line.split(":")
-                    sessions.append(
-                        {
-                            "name": name,
-                            "created": created,
-                            "windows": int(windows),
-                            "agents": self._get_session_agents(name),
-                        }
-                    )
+            for line in result.stdout.strip().split('\n'):
+                if line and ':' in line:
+                    parts = line.split(':', 2)
+                    sessions.append({
+                        'name': parts[0],
+                        'created': parts[1] if len(parts) > 1 else '',
+                        'windows': int(parts[2]) if len(parts) > 2 else 0
+                    })
             return sessions
+
+        except subprocess.CalledProcessError:
+            return []  # No sessions is valid
+
+    @classmethod
+    def get_windows(cls, session: str) -> List[Dict[str, Any]]:
+        """Get windows for a session"""
+        try:
+            result = cls.run_command([
+                "tmux", "list-windows", "-t", session, "-F",
+                "#{window_index}:#{window_name}:#{pane_current_command}"
+            ])
+
+            windows = []
+            for line in result.stdout.strip().split('\n'):
+                if line and ':' in line:
+                    parts = line.split(':', 2)
+                    windows.append({
+                        'index': int(parts[0]),
+                        'name': parts[1] if len(parts) > 1 else '',
+                        'command': parts[2] if len(parts) > 2 else ''
+                    })
+            return windows
+
         except subprocess.CalledProcessError:
             return []
 
-    def _get_session_agents(self, session_name: str) -> List[Dict]:
-        """Get all Claude agents in a session"""
-        agents = []
+    @classmethod
+    def capture_pane(cls, session: str, window: int, lines: int = 5) -> str:
+        """Capture output from a pane"""
         try:
-            result = subprocess.run(
-                [
-                    "tmux",
-                    "list-windows",
-                    "-t",
-                    session_name,
-                    "-F",
-                    "#{window_index}:#{window_name}:#{pane_current_command}",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            for line in result.stdout.strip().split("\n"):
-                if line:
-                    idx, name, cmd = line.split(":", 2)
-                    if "claude" in name.lower() or cmd == "node":
-                        agents.append(
-                            {
-                                "window": int(idx),
-                                "name": name,
-                                "command": cmd,
-                                "status": self._check_agent_health(session_name, idx),
-                            }
-                        )
+            result = cls.run_command([
+                "tmux", "capture-pane", "-t", f"{session}:{window}",
+                "-p", "-S", f"-{lines}"
+            ])
+            return result.stdout
         except subprocess.CalledProcessError:
-            pass
+            return ""
+
+
+class ClaudeMonitor:
+    """Simplified monitoring of Claude agents (consolidates 6 classes)"""
+
+    # Health check patterns (from ClaudeHealthChecker)
+    HEALTH_PATTERNS = {
+        AgentStatus.READY: ["Human:", "> ", "Ready", "I'll help", "I can help"],
+        AgentStatus.ERROR: ["Error:", "error:", "ERROR", "Failed", "failed"],
+        AgentStatus.BUSY: ["Processing", "Working on", "Let me", "I'm currently", "..."]
+    }
+
+    # Claude detection patterns (from SessionAnalyzer)
+    CLAUDE_INDICATORS = ["claude", "Claude", "node"]
+
+    def __init__(self, registry_path: Optional[Path] = None):
+        # Simplified initialization
+        self.tmux = TmuxClient()
+        self.base_dir = Path(__file__).parent.resolve()
+        self.registry_path = registry_path or self.base_dir / "registry" / "sessions.json"
+        self.logger = logging.getLogger(__name__)
+
+        # Create registry directory if needed
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def get_all_agents(self) -> List[Dict[str, Any]]:
+        """Find all Claude agents across all sessions"""
+        agents = []
+
+        for session in self.tmux.get_sessions():
+            session_agents = self._find_agents_in_session(session)
+            agents.extend(session_agents)
+
         return agents
 
-    def _check_agent_health(self, session: str, window: str) -> str:
-        """Check if an agent is responsive"""
-        try:
-            # Capture last lines to check for activity
-            result = subprocess.run(
-                ["tmux", "capture-pane", "-t", f"{session}:{window}", "-p", "-S", "-5"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            output = result.stdout.strip()
+    def _find_agents_in_session(self, session: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Find Claude agents in a specific session"""
+        agents = []
+        windows = self.tmux.get_windows(session['name'])
 
-            # Check for common Claude prompt indicators
-            if ">" in output or "?" in output:
-                return "ready"
-            elif "error" in output.lower():
-                return "error"
-            else:
-                return "busy"
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, Exception) as e:
-            import logging
+        for window in windows:
+            if self._is_claude_window(window):
+                output = self.tmux.capture_pane(session['name'], window['index'])
 
-            logging.warning(f"Health check failed for {session}:{window}: {e}")
-            return "unknown"
+                agents.append({
+                    'session': session['name'],
+                    'session_created': session.get('created', ''),
+                    'session_windows': session.get('windows', 0),
+                    'window': window['index'],
+                    'name': window['name'],
+                    'status': self._check_health(output),
+                    'process': window.get('command', '')
+                })
 
-    def status(self, detailed: bool = False) -> None:
-        """Print orchestrator status"""
-        sessions = self.get_active_sessions()
+        return agents
 
-        print(f"\n🎯 Tmux Orchestrator Status - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 60)
+    def _is_claude_window(self, window: Dict[str, Any]) -> bool:
+        """Check if a window contains a Claude agent"""
+        search_text = f"{window.get('name', '')} {window.get('command', '')}"
+        return any(indicator in search_text for indicator in self.CLAUDE_INDICATORS)
 
-        if not sessions:
-            print("❌ No active sessions found")
-            return
+    def _check_health(self, output: str) -> str:
+        """Determine agent health from output"""
+        if not output:
+            return AgentStatus.UNKNOWN
 
-        total_agents = sum(len(s["agents"]) for s in sessions)
-        print(f"📊 Active Sessions: {len(sessions)} | Total Agents: {total_agents}")
-        print()
+        # Check each status type (order matters - check ready first for better accuracy)
+        for status, patterns in self.HEALTH_PATTERNS.items():
+            if any(pattern in output for pattern in patterns):
+                return status
 
-        for session in sessions:
-            print(f"📁 Session: {session['name']} ({session['windows']} windows)")
+        return AgentStatus.BUSY
 
-            if detailed and session["agents"]:
-                for agent in session["agents"]:
-                    status_icon = {"ready": "✅", "busy": "🔄", "error": "❌", "unknown": "❓"}.get(
-                        agent["status"], "❓"
-                    )
+    def save_status(self, agents: List[Dict[str, Any]]) -> None:
+        """Save current status to registry (was RegistryManager)"""
+        # Group agents by session for backward compatibility
+        sessions = {}
+        for agent in agents:
+            session_name = agent['session']
+            if session_name not in sessions:
+                sessions[session_name] = {
+                    'name': session_name,
+                    'created': agent.get('session_created', ''),
+                    'windows': agent.get('session_windows', 0),
+                    'agents': []
+                }
 
-                    print(
-                        f"   {status_icon} Window {agent['window']}: "
-                        f"{agent['name']} - {agent['status']}"
-                    )
-            elif session["agents"]:
-                print(f"   🤖 {len(session['agents'])} Claude agents active")
-            print()
+            # Format agent for registry
+            sessions[session_name]['agents'].append({
+                'window': agent['window'],
+                'name': agent['name'],
+                'status': agent['status'],
+                'process': agent.get('process', '')
+            })
 
-    def save_registry(self) -> None:
-        """Save current session registry"""
-        sessions = self.get_active_sessions()
-        registry = {"updated": datetime.now().isoformat(), "sessions": sessions}
-
-        with open(self.sessions_file, "w") as f:
-            json.dump(registry, f, indent=2)
-
-        print(f"✅ Registry saved to {self.sessions_file}")
-
-    def health_check(self) -> Dict:
-        """Perform system health check"""
-        health = {
-            "timestamp": datetime.now().isoformat(),
-            "tmux_available": self._check_tmux(),
-            "claude_available": self._check_claude(),
-            "active_sessions": len(self.get_active_sessions()),
-            "issues": [],
+        data = {
+            'updated': datetime.now().isoformat(),
+            'sessions': list(sessions.values())
         }
 
-        # Check for common issues
-        if not health["tmux_available"]:
-            health["issues"].append("tmux not available")
+        with open(self.registry_path, 'w') as f:
+            json.dump(data, f, indent=2)
 
-        if not health["claude_available"]:
-            health["issues"].append("claude command not found")
-
-        return health
-
-    def _check_tmux(self) -> bool:
-        """Check if tmux is available"""
+    def health_check(self) -> Dict[str, Any]:
+        """System health check (was SystemHealthChecker)"""
+        # Check tmux
         try:
-            subprocess.run(["tmux", "-V"], capture_output=True, check=True)
+            self.tmux.run_command(["tmux", "-V"])
+            tmux_ok = True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            tmux_ok = False
+
+        # Check claude
+        claude_ok = self._check_claude_available()
+
+        # Get current status
+        agents = self.get_all_agents()
+        sessions = {agent['session'] for agent in agents}
+
+        issues = []
+        if not tmux_ok:
+            issues.append("tmux not found")
+        if not claude_ok:
+            issues.append("claude command not found")
+
+        return {
+            'timestamp': datetime.now().isoformat(),
+            'tmux_available': tmux_ok,
+            'claude_available': claude_ok,
+            'active_sessions': len(sessions),
+            'total_agents': len(agents),
+            'issues': issues
+        }
+
+    def _check_claude_available(self) -> bool:
+        """Check if Claude CLI is available"""
+        # First try the helper script
+        script_path = self.base_dir / "get_claude_command.sh"
+        if script_path.exists():
+            try:
+                result = subprocess.run(
+                    [str(script_path)],
+                    capture_output=True,
+                    check=False
+                )
+                if result.returncode == 0:
+                    return True
+            except Exception:
+                pass
+
+        # Fallback to direct check
+        try:
+            subprocess.run(["claude", "--version"], capture_output=True, check=True)
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
 
-    def _check_claude(self) -> bool:
-        """Check if claude command is available"""
-        # Use our get_claude_command.sh script
-        script_path = self.base_dir / "get_claude_command.sh"
-        if script_path.exists():
-            try:
-                result = subprocess.run([str(script_path)], capture_output=True, text=True)
-                return result.returncode == 0
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                pass
-        return False
+
+# Simple formatting function instead of StatusFormatter class
+def format_status(agents: List[Dict[str, Any]], detailed: bool = False) -> None:
+    """Format and print status information"""
+    if not agents:
+        print("\033[1;33mNo active sessions found\033[0m")
+        return
+
+    # Group by session
+    sessions = {}
+    for agent in agents:
+        session = agent['session']
+        if session not in sessions:
+            sessions[session] = []
+        sessions[session].append(agent)
+
+    # Print header
+    print("\n\033[0;34m🎯 Tmux Orchestrator Status\033[0m")
+    print("=" * 50)
+    print(f"Active Sessions: {len(sessions)}")
+    print(f"Total Agents: {len(agents)}\n")
+
+    # Print each session
+    for session, session_agents in sessions.items():
+        print(f"\033[0;32m📁 {session}\033[0m")
+        windows = session_agents[0].get('session_windows', 'unknown')
+        print(f"   Windows: {windows}")
+        print(f"   Agents: {len(session_agents)}")
+
+        if detailed:
+            for agent in session_agents:
+                status = agent['status']
+                color = {
+                    AgentStatus.READY: '\033[0;32m',   # green
+                    AgentStatus.BUSY: '\033[1;33m',    # yellow
+                    AgentStatus.ERROR: '\033[0;31m',   # red
+                    AgentStatus.UNKNOWN: '\033[0;34m'  # blue
+                }.get(status, '')
+
+                print(f"   - Window {agent['window']}: {agent['name']} "
+                      f"[{color}{status}\033[0m]")
+        print()
 
 
 def main():
-    """CLI entry point"""
-    orchestrator = ClaudeOrchestrator()
+    """Main entry point"""
+    import sys
 
-    if len(sys.argv) < 2:
-        orchestrator.status()
-        return
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
-    command = sys.argv[1]
+    try:
+        monitor = ClaudeMonitor()
 
-    if command == "status":
-        detailed = len(sys.argv) > 2 and sys.argv[2] == "detailed"
-        orchestrator.status(detailed)
-    elif command == "save":
-        orchestrator.save_registry()
-    elif command == "health":
-        health = orchestrator.health_check()
-        print(json.dumps(health, indent=2))
-    else:
-        print(f"Unknown command: {command}")
-        print("Usage: claude_control.py [status|save|health] [detailed]")
+        # Parse simple commands
+        command = sys.argv[1] if len(sys.argv) > 1 else "status"
+
+        if command == "status":
+            detailed = len(sys.argv) > 2 and sys.argv[2] == "detailed"
+            agents = monitor.get_all_agents()
+            format_status(agents, detailed)
+            monitor.save_status(agents)
+
+        elif command == "health":
+            health = monitor.health_check()
+            print(json.dumps(health, indent=2))
+
+        else:
+            print(f"Unknown command: {command}")
+            print("Usage: claude_control.py [status [detailed]|health]")
+            sys.exit(1)
+
+    except Exception as e:
+        logging.error(f"Fatal error: {e}")
         sys.exit(1)
 
 

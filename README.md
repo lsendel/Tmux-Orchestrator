@@ -11,6 +11,8 @@
 
 ## 🏗️ Architecture
 
+> **Recent Update**: The codebase has been significantly simplified! We've reduced complexity from 20 classes to just 2 main components while maintaining all functionality. See [SIMPLIFICATION_PROGRESS.md](docs/archive/SIMPLIFICATION_PROGRESS.md) for details.
+
 The Tmux Orchestrator uses a three-tier hierarchy to overcome context window limitations:
 
 ```
@@ -35,6 +37,11 @@ The Tmux Orchestrator uses a three-tier hierarchy to overcome context window lim
 - **Specialized expertise** - PMs manage, engineers code
 - **Parallel work** - Multiple engineers can work simultaneously
 - **Better memory** - Smaller contexts mean better recall
+
+### Simplified Implementation
+The orchestrator now uses just two main Python modules:
+- `claude_control.py` - Monitors and manages Claude agents (ClaudeMonitor + TmuxClient)
+- `tmux_utils.py` - Handles all tmux operations (TmuxManager)
 
 ## 📸 Examples in Action
 

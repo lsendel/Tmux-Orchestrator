@@ -1,242 +1,356 @@
 #!/usr/bin/env python3
+"""
+Simplified Tmux Utils - Phase 2 Implementation
+Consolidates 10 classes into 1 main component
+"""
 
 import subprocess
-import json
-import re
-from typing import List, Dict, Tuple, Any
+import logging
+from typing import List, Optional, Any
 from dataclasses import dataclass
-from datetime import datetime
+from pathlib import Path
 
 
+# Simple window type constants instead of enum
+class WindowType:
+    """Window type constants"""
+    CLAUDE = "claude"
+    SERVER = "server"
+    SHELL = "shell"
+    OTHER = "other"
+
+
+# Keep dataclasses - they're not over-engineered
 @dataclass
 class TmuxWindow:
-    session_name: str
-    window_index: int
-    window_name: str
-    active: bool
+    """Represents a tmux window"""
+    index: int
+    name: str
+    command: str
+    type: str = WindowType.OTHER
 
 
 @dataclass
 class TmuxSession:
+    """Represents a tmux session"""
     name: str
+    created: str
     windows: List[TmuxWindow]
-    attached: bool
 
 
-class TmuxOrchestrator:
+class TmuxManager:
+    """Consolidated tmux operations manager"""
+
+    # Merge InputValidator constants
+    INVALID_CHARS = ["'", '"', ";", "&", "|", "$", "`", "\\", "(", ")", "<", ">", "*", "?", "[", "]", "{", "}", "!", "#"]
+
+    # Window type patterns (from SessionDiscovery)
+    WINDOW_PATTERNS = {
+        WindowType.CLAUDE: ["claude", "Claude", "node"],
+        WindowType.SERVER: ["dev", "server", "run", "npm", "yarn", "uvicorn", "django"],
+        WindowType.SHELL: ["zsh", "bash", "sh", "fish"]
+    }
+
     def __init__(self):
-        self.safety_mode = True
-        self.max_lines_capture = 1000
+        self.logger = logging.getLogger(__name__)
 
-    def get_tmux_sessions(self) -> List[TmuxSession]:
-        """Get all tmux sessions and their windows"""
+    # === Validation methods (from InputValidator) ===
+
+    def validate_session_name(self, name: str) -> bool:
+        """Validate session name is safe"""
+        if not name or not name.strip():
+            return False
+        return not any(char in name for char in self.INVALID_CHARS)
+
+    def validate_window_index(self, index: Any) -> bool:
+        """Validate window index"""
         try:
-            # Get sessions
-            sessions_cmd = ["tmux", "list-sessions", "-F", "#{session_name}:#{session_attached}"]
-            sessions_result = subprocess.run(
-                sessions_cmd, capture_output=True, text=True, check=True
+            idx = int(index)
+            return idx >= 0
+        except (ValueError, TypeError):
+            return False
+
+    def sanitize_keys(self, keys: str) -> str:
+        """Sanitize keys to send"""
+        # Simple validation - just escape quotes
+        return keys.replace("'", "'\"'\"'")
+
+    # === Command execution (from TmuxCommandExecutor) ===
+
+    def execute_command(self, command: List[str], check: bool = True) -> Optional[subprocess.CompletedProcess]:
+        """Execute a tmux command"""
+        try:
+            self.logger.debug(f"Executing: {' '.join(command)}")
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=check
             )
-            sessions = []
-            for line in sessions_result.stdout.strip().split("\n"):
-                if not line:
-                    continue
-                session_name, attached = line.split(":")
+            return result
+        except subprocess.CalledProcessError as e:
+            if check:
+                self.logger.error(f"Command failed: {e}")
+                raise
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error: {e}")
+            raise
 
-                # Get windows for this session
-                windows_cmd = [
-                    "tmux",
-                    "list-windows",
-                    "-t",
-                    session_name,
-                    "-F",
-                    "#{window_index}:#{window_name}:#{window_active}",
-                ]
-                windows_result = subprocess.run(
-                    windows_cmd, capture_output=True, text=True, check=True
-                )
+    # === Session discovery (from SessionDiscovery) ===
 
-                windows = []
-                for window_line in windows_result.stdout.strip().split("\n"):
-                    if not window_line:
-                        continue
-                    window_index, window_name, window_active = window_line.split(":")
-                    windows.append(
-                        TmuxWindow(
-                            session_name=session_name,
-                            window_index=int(window_index),
-                            window_name=window_name,
-                            active=window_active == "1",
-                        )
-                    )
+    def get_all_sessions(self) -> List[TmuxSession]:
+        """Get all tmux sessions with their windows"""
+        sessions = []
 
-                sessions.append(
-                    TmuxSession(name=session_name, windows=windows, attached=attached == "1")
-                )
+        # Get sessions
+        result = self.execute_command(
+            ["tmux", "list-sessions", "-F", "#{session_name}:#{session_created}"]
+        )
 
+        if not result or not result.stdout:
             return sessions
-        except subprocess.CalledProcessError as e:
-            print(f"Error getting tmux sessions: {e}")
-            return []
 
-    def capture_window_content(
-        self, session_name: str, window_index: int, num_lines: int = 50
-    ) -> str:
-        """Safely capture the last N lines from a tmux window"""
-        if num_lines > self.max_lines_capture:
-            num_lines = self.max_lines_capture
+        for line in result.stdout.strip().split('\n'):
+            if not line or ':' not in line:
+                continue
 
-        try:
-            cmd = [
-                "tmux",
-                "capture-pane",
-                "-t",
-                f"{session_name}:{window_index}",
-                "-p",
-                "-S",
-                f"-{num_lines}",
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            parts = line.split(':', 1)
+            session_name = parts[0]
+            created = parts[1] if len(parts) > 1 else ""
+
+            # Get windows for this session
+            windows = self._get_session_windows(session_name)
+
+            sessions.append(TmuxSession(
+                name=session_name,
+                created=created,
+                windows=windows
+            ))
+
+        return sessions
+
+    def _get_session_windows(self, session_name: str) -> List[TmuxWindow]:
+        """Get windows for a specific session"""
+        windows = []
+
+        result = self.execute_command(
+            ["tmux", "list-windows", "-t", session_name, "-F",
+             "#{window_index}:#{window_name}:#{pane_current_command}"],
+            check=False
+        )
+
+        if not result or result.returncode != 0 or not result.stdout:
+            return windows
+
+        for line in result.stdout.strip().split('\n'):
+            if not line or ':' not in line:
+                continue
+
+            parts = line.split(':', 2)
+            if len(parts) >= 2:
+                try:
+                    index = int(parts[0])
+                    name = parts[1]
+                    command = parts[2] if len(parts) > 2 else ""
+                    window_type = self._determine_window_type(name, command)
+
+                    windows.append(TmuxWindow(
+                        index=index,
+                        name=name,
+                        command=command,
+                        type=window_type
+                    ))
+                except ValueError:
+                    self.logger.warning(f"Invalid window format: {line}")
+
+        return windows
+
+    def _determine_window_type(self, name: str, command: str) -> str:
+        """Determine the type of window"""
+        search_text = f"{name} {command}".lower()
+
+        for window_type, patterns in self.WINDOW_PATTERNS.items():
+            if any(pattern.lower() in search_text for pattern in patterns):
+                return window_type
+
+        return WindowType.OTHER
+
+    # === Window operations (from WindowOperations) ===
+
+    def send_keys_to_window(self, session: str, window: int, keys: str) -> bool:
+        """Send keys to a specific window"""
+        # Validate inputs
+        if not self.validate_session_name(session):
+            self.logger.error(f"Invalid session name: {session}")
+            return False
+
+        if not self.validate_window_index(window):
+            self.logger.error(f"Invalid window index: {window}")
+            return False
+
+        # Sanitize and send keys
+        safe_keys = self.sanitize_keys(keys)
+        result = self.execute_command(
+            ["tmux", "send-keys", "-t", f"{session}:{window}", safe_keys],
+            check=False
+        )
+
+        return result is not None and result.returncode == 0
+
+    def capture_window_output(self, session: str, window: int, lines: int = 50) -> Optional[str]:
+        """Capture output from a window"""
+        if not self.validate_session_name(session) or not self.validate_window_index(window):
+            return None
+
+        # Limit lines to reasonable amount
+        lines = min(lines, 1000)
+
+        result = self.execute_command(
+            ["tmux", "capture-pane", "-t", f"{session}:{window}", "-p", "-S", f"-{lines}"],
+            check=False
+        )
+
+        if result and result.returncode == 0:
             return result.stdout
-        except subprocess.CalledProcessError as e:
-            return f"Error capturing window content: {e}"
+        return None
 
-    def get_window_info(self, session_name: str, window_index: int) -> Dict[str, Any]:
-        """Get detailed information about a specific window"""
+    # === Session operations (from SessionOperations) ===
+
+    def create_session(self, name: str, start_dir: Optional[str] = None) -> bool:
+        """Create a new tmux session"""
+        if not self.validate_session_name(name):
+            self.logger.error(f"Invalid session name: {name}")
+            return False
+
+        command = ["tmux", "new-session", "-d", "-s", name]
+        if start_dir and Path(start_dir).exists():
+            command.extend(["-c", start_dir])
+
+        result = self.execute_command(command, check=False)
+        return result is not None and result.returncode == 0
+
+    def add_window(self, session: str, name: str, start_dir: Optional[str] = None) -> bool:
+        """Add a window to a session"""
+        if not self.validate_session_name(session):
+            return False
+
+        command = ["tmux", "new-window", "-t", session, "-n", name]
+        if start_dir and Path(start_dir).exists():
+            command.extend(["-c", start_dir])
+
+        result = self.execute_command(command, check=False)
+        return result is not None and result.returncode == 0
+
+    # === High-level orchestration methods ===
+
+    def create_project_session(self, project_name: str, project_path: str) -> bool:
+        """Create a complete project session with standard windows"""
+        # Validate inputs
+        if not self.validate_session_name(project_name):
+            self.logger.error(f"Invalid project name: {project_name}")
+            return False
+
+        project_dir = Path(project_path)
+        if not project_dir.exists():
+            self.logger.error(f"Project path does not exist: {project_path}")
+            return False
+
         try:
-            cmd = [
-                "tmux",
-                "display-message",
-                "-t",
-                f"{session_name}:{window_index}",
-                "-p",
-                "#{window_name}:#{window_active}:#{window_panes}:#{window_layout}",
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-
-            if result.stdout.strip():
-                parts = result.stdout.strip().split(":")
-                return {
-                    "name": parts[0],
-                    "active": parts[1] == "1",
-                    "panes": int(parts[2]),
-                    "layout": parts[3],
-                    "content": self.capture_window_content(session_name, window_index),
-                }
-        except subprocess.CalledProcessError as e:
-            return {"error": f"Could not get window info: {e}"}
-
-    def send_keys_to_window(
-        self, session_name: str, window_index: int, keys: str, confirm: bool = True
-    ) -> bool:
-        """Safely send keys to a tmux window with confirmation"""
-        # Validate session name format
-        if not re.match(r"^[a-zA-Z0-9_-]+$", session_name):
-            raise ValueError(f"Invalid session name format: {session_name}")
-        # Validate window index
-        if not isinstance(window_index, int) or window_index < 0:
-            raise ValueError(f"Invalid window index: {window_index}")
-        if self.safety_mode and confirm:
-            print(f"SAFETY CHECK: About to send '{keys}' to {session_name}:{window_index}")
-            response = input("Confirm? (yes/no): ")
-            if response.lower() != "yes":
-                print("Operation cancelled")
+            # Create session
+            if not self.create_session(project_name, str(project_dir)):
                 return False
 
-        try:
-            # Escape special characters in keys to prevent injection
-            import shlex
+            # Rename first window
+            self.execute_command(
+                ["tmux", "rename-window", "-t", f"{project_name}:0", "Claude-Agent"]
+            )
 
-            safe_keys = shlex.quote(keys)
-            cmd = ["tmux", "send-keys", "-t", f"{session_name}:{window_index}", safe_keys]
-            subprocess.run(cmd, check=True)
+            # Add standard windows
+            self.add_window(project_name, "Shell", str(project_dir))
+            self.add_window(project_name, "Server", str(project_dir))
+
+            self.logger.info(f"Created project session: {project_name}")
             return True
-        except subprocess.CalledProcessError as e:
-            print(f"Error sending keys: {e}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to create project session: {e}")
             return False
 
-    def send_command_to_window(
-        self, session_name: str, window_index: int, command: str, confirm: bool = True
-    ) -> bool:
-        """Send a command to a window (adds Enter automatically)"""
-        # First send the command text
-        if not self.send_keys_to_window(session_name, window_index, command, confirm):
-            return False
-        # Then send the actual Enter key (C-m)
-        try:
-            cmd = ["tmux", "send-keys", "-t", f"{session_name}:{window_index}", "C-m"]
-            subprocess.run(cmd, check=True)
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"Error sending Enter key: {e}")
+    def send_message(self, session: str, window: int, message: str) -> bool:
+        """Send a message to a window (convenience method)"""
+        # Send the message
+        if not self.send_keys_to_window(session, window, message):
             return False
 
-    def get_all_windows_status(self) -> Dict[str, Any]:
-        """Get status of all windows across all sessions"""
-        sessions = self.get_tmux_sessions()
-        status = {"timestamp": datetime.now().isoformat(), "sessions": []}
+        # Send Enter key
+        return self.send_keys_to_window(session, window, "Enter")
 
-        for session in sessions:
-            session_data = {"name": session.name, "attached": session.attached, "windows": []}
+    def get_window_output(self, session: str, window: int, lines: int = 50) -> Optional[str]:
+        """Get recent output from a window (convenience method)"""
+        return self.capture_window_output(session, window, lines)
 
-            for window in session.windows:
-                window_info = self.get_window_info(session.name, window.window_index)
-                window_data = {
-                    "index": window.window_index,
-                    "name": window.window_name,
-                    "active": window.active,
-                    "info": window_info,
-                }
-                session_data["windows"].append(window_data)
 
-            status["sessions"].append(session_data)
+def main():
+    """Simple CLI interface"""
+    import sys
 
-        return status
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
-    def find_window_by_name(self, window_name: str) -> List[Tuple[str, int]]:
-        """Find windows by name across all sessions"""
-        sessions = self.get_tmux_sessions()
-        matches = []
+    manager = TmuxManager()
 
-        for session in sessions:
-            for window in session.windows:
-                if window_name.lower() in window.window_name.lower():
-                    matches.append((session.name, window.window_index))
+    if len(sys.argv) < 2:
+        print("Usage: tmux_utils.py [list|create|send] [args...]")
+        sys.exit(1)
 
-        return matches
+    command = sys.argv[1]
 
-    def create_monitoring_snapshot(self) -> str:
-        """Create a comprehensive snapshot for Claude analysis"""
-        status = self.get_all_windows_status()
+    try:
+        if command == "list":
+            sessions = manager.get_all_sessions()
+            for session in sessions:
+                print(f"\n📁 {session.name}")
+                print(f"   Created: {session.created}")
+                print(f"   Windows: {len(session.windows)}")
+                for window in session.windows:
+                    print(f"   - [{window.index}] {window.name} ({window.type})")
 
-        # Format for Claude consumption
-        snapshot = f"Tmux Monitoring Snapshot - {status['timestamp']}\n"
-        snapshot += "=" * 50 + "\n\n"
+        elif command == "create" and len(sys.argv) >= 4:
+            project_name = sys.argv[2]
+            project_path = sys.argv[3]
+            success = manager.create_project_session(project_name, project_path)
+            if success:
+                print(f"✅ Created session: {project_name}")
+            else:
+                print("❌ Failed to create session")
+                sys.exit(1)
 
-        for session in status["sessions"]:
-            attached_str = "ATTACHED" if session["attached"] else "DETACHED"
-            snapshot += f"Session: {session['name']} ({attached_str})\n"
-            snapshot += "-" * 30 + "\n"
+        elif command == "send" and len(sys.argv) >= 5:
+            session = sys.argv[2]
+            window = int(sys.argv[3])
+            message = sys.argv[4]
+            success = manager.send_message(session, window, message)
+            if success:
+                print(f"✅ Sent message to {session}:{window}")
+            else:
+                print("❌ Failed to send message")
+                sys.exit(1)
 
-            for window in session["windows"]:
-                snapshot += f"  Window {window['index']}: {window['name']}"
-                if window["active"]:
-                    snapshot += " (ACTIVE)"
-                snapshot += "\n"
+        else:
+            print("Invalid command or arguments")
+            print("Usage:")
+            print("  tmux_utils.py list")
+            print("  tmux_utils.py create <session> <path>")
+            print("  tmux_utils.py send <session> <window> <message>")
+            sys.exit(1)
 
-                if "content" in window["info"]:
-                    # Get last 10 lines for overview
-                    content_lines = window["info"]["content"].split("\n")
-                    recent_lines = content_lines[-10:] if len(content_lines) > 10 else content_lines
-                    snapshot += "    Recent output:\n"
-                    for line in recent_lines:
-                        if line.strip():
-                            snapshot += f"    | {line}\n"
-                snapshot += "\n"
-
-        return snapshot
+    except Exception as e:
+        logging.error(f"Error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    orchestrator = TmuxOrchestrator()
-    status = orchestrator.get_all_windows_status()
-    print(json.dumps(status, indent=2))
+    main()
