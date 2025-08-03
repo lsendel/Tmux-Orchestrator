@@ -1,4 +1,4 @@
-![Orchestrator Hero](/Orchestrator.png)
+![Orchestrator Hero](docs/images/Orchestrator.png)
 
 **Run AI agents 24/7 while you sleep** - The Tmux Orchestrator enables Claude agents to work autonomously, schedule their own check-ins, and coordinate across multiple projects without human intervention.
 

@@ -5,7 +5,7 @@
 
 # Load environment variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/load_env.sh"
+source "$SCRIPT_DIR/scripts/utils/load_env.sh"
 
 MINUTES=${1:-$DEFAULT_SCHEDULE_MINUTES}
 NOTE=${2:-"$DEFAULT_CHECK_NOTE"}

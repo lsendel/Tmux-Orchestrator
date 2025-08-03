@@ -24,6 +24,8 @@ Commands:
   stop <session>      Stop a tmux session
   deploy <session>    Deploy a project manager to a session
   message <target>    Send a message to a Claude agent
+  activity <target>   Check what an agent is working on
+  summary             Show activity summary for all agents
   schedule <min>      Schedule a check-in after N minutes
   list                List all projects in ~/Coding
   health              Run system health checks
@@ -33,6 +35,9 @@ Examples:
   orchestrator start task-templates
   orchestrator deploy my-project
   orchestrator message my-project:0 "What's your status?"
+  orchestrator activity zamaz-mcp-llm:0
+  orchestrator summary
+  orchestrator summary --save
   orchestrator schedule 30 "Check test results"
 
 Configuration:
@@ -99,11 +104,11 @@ start_project() {
     tmux new-window -t "$project_name" -n "Dev-Server" -c "$project_path"
     
     # Start Claude in first window
-    "$SCRIPT_DIR/start_claude.sh" "$project_name:0"
+    "$SCRIPT_DIR/scripts/utils/start_claude.sh" "$project_name:0"
     
     # Brief the agent
     sleep 5
-    "$SCRIPT_DIR/send-claude-message.sh" "$project_name:0" "You are responsible for the $project_name codebase. Your duties include:
+    "$SCRIPT_DIR/scripts/utils/send-claude-message.sh" "$project_name:0" "You are responsible for the $project_name codebase. Your duties include:
 1. Getting the application running
 2. Checking GitHub issues for priorities  
 3. Working on highest priority tasks
@@ -135,7 +140,7 @@ deploy_pm() {
     
     # Find next available window index
     local window_count
-    window_count=$(tmux list-windows -t "$session" -F "#{window_index}" | wc -l)
+    window_count=$(tmux list-windows -t "$session" -F "#{window_index}" | wc -l | tr -d ' ')
     
     echo -e "${GREEN}Deploying Project Manager to $session${NC}"
     
@@ -147,11 +152,11 @@ deploy_pm() {
     tmux new-window -t "$session" -n "Project-Manager" -c "$project_path"
     
     # Start Claude
-    "$SCRIPT_DIR/start_claude.sh" "$session:$window_count"
+    "$SCRIPT_DIR/scripts/utils/start_claude.sh" "$session:$window_count"
     
     # Brief the PM
     sleep 5
-    "$SCRIPT_DIR/send-claude-message.sh" "$session:$window_count" "You are the Project Manager for this project. Your responsibilities:
+    "$SCRIPT_DIR/scripts/utils/send-claude-message.sh" "$session:$window_count" "You are the Project Manager for this project. Your responsibilities:
 1. Quality Standards: Maintain exceptionally high standards
 2. Verification: Test everything thoroughly
 3. Team Coordination: Manage communication efficiently
@@ -188,7 +193,7 @@ case "$1" in
             echo "Usage: orchestrator message <target> <message>"
             exit 1
         fi
-        "$SCRIPT_DIR/send-claude-message.sh" "$2" "$3"
+        "$SCRIPT_DIR/scripts/utils/send-claude-message.sh" "$2" "$3"
         ;;
     schedule)
         shift
@@ -199,6 +204,17 @@ case "$1" in
         ;;
     health)
         python3 "$SCRIPT_DIR/claude_control.py" health
+        ;;
+    activity)
+        if [ -z "$2" ]; then
+            echo "Usage: orchestrator activity <session:window> [lines]"
+            echo "Example: orchestrator activity zamaz-mcp-llm:0 50"
+            exit 1
+        fi
+        "$SCRIPT_DIR/scripts/utils/check-agent-activity.sh" "$2" "${3:-30}"
+        ;;
+    summary)
+        "$SCRIPT_DIR/scripts/utils/activity-summary.sh" "$2"
         ;;
     help|--help|-h|"")
         show_help
