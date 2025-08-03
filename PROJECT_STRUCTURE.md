@@ -10,7 +10,6 @@ Tmux-Orchestrator/
 ├── schedule_with_note.sh    # Scheduling script for orchestrator checks
 ├── run_tests.sh             # Test runner script
 ├── install.sh               # Installation script
-├── config.json              # Configuration file
 ├── requirements.txt         # Python dependencies
 ├── README.md                # Main documentation
 ├── CLAUDE.md                # Claude-specific project knowledge
@@ -73,8 +72,8 @@ Tmux-Orchestrator/
 - **scripts/utils/**: Collection of helper scripts for Claude operations
 
 ### 4. Configuration
-- **config.json**: Central configuration for paths and settings
-- **.env**: Environment-specific settings (created from .env.example)
+- **.env**: Central configuration for all settings (created from .env.example)
+- **.env.example**: Template with all available configuration options
 
 ### 5. Testing
 - **run_tests.sh**: Runs linting, unit tests, and coverage reports

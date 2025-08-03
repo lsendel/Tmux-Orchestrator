@@ -41,7 +41,7 @@ Examples:
   orchestrator schedule 30 "Check test results"
 
 Configuration:
-  Projects directory: ~/Coding (or set CODING_DIR environment variable)
+  Projects directory: Set CODING_DIR in .env file (default: ~/IdeaProjects)
   Registry location: $SCRIPT_DIR/registry/
 
 For more information, see README.md
@@ -50,12 +50,11 @@ EOF
 
 # Function to find projects
 find_projects() {
-    # Read from config.json if exists, otherwise use environment variable or default
-    local config_dir="$HOME/IdeaProjects"
-    if [ -f "$SCRIPT_DIR/config.json" ]; then
-        config_dir=$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/config.json'))['orchestrator']['coding_directory'].replace('~', '$HOME'))" 2>/dev/null) || config_dir="$HOME/IdeaProjects"
-    fi
-    local coding_dir="${CODING_DIR:-$config_dir}"
+    # Load environment variables
+    source "$SCRIPT_DIR/scripts/utils/load_env.sh"
+    
+    # Use CODING_DIR from .env, fallback to default
+    local coding_dir="${CODING_DIR:-$HOME/IdeaProjects}"
     if [ ! -d "$coding_dir" ]; then
         echo -e "${RED}Error: Coding directory not found at $coding_dir${NC}"
         echo "Set CODING_DIR environment variable to override"
@@ -69,12 +68,11 @@ find_projects() {
 # Start a new project
 start_project() {
     local project_name="$1"
-    # Read from config.json if exists
-    local config_dir="$HOME/IdeaProjects"
-    if [ -f "$SCRIPT_DIR/config.json" ]; then
-        config_dir=$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/config.json'))['orchestrator']['coding_directory'].replace('~', '$HOME'))" 2>/dev/null) || config_dir="$HOME/IdeaProjects"
-    fi
-    local coding_dir="${CODING_DIR:-$config_dir}"
+    # Load environment variables
+    source "$SCRIPT_DIR/scripts/utils/load_env.sh"
+    
+    # Use CODING_DIR from .env, fallback to default
+    local coding_dir="${CODING_DIR:-$HOME/IdeaProjects}"
     local project_path="$coding_dir/$project_name"
     
     if [ -z "$project_name" ]; then
