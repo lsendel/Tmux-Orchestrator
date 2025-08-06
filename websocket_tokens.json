@@ -1,0 +1,16 @@
+{
+  "2wnhQzjXRjArbtBzUQh9t3u-EbtDd-LideYt2O_a1v4": {
+    "token": "2wnhQzjXRjArbtBzUQh9t3u-EbtDd-LideYt2O_a1v4",
+    "client_name": "development",
+    "permissions": [
+      "write",
+      "subscribe",
+      "snapshot",
+      "read"
+    ],
+    "created_at": "2025-08-05T23:33:22.441384",
+    "expires_at": null,
+    "last_used": "2025-08-06T00:16:04.837992",
+    "description": "Default development token - DELETE IN PRODUCTION"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "pRPMh4sLACyrEtpqwivcmG1PY8ki2LJWlhEUnVM96q8": {
+    "token": "pRPMh4sLACyrEtpqwivcmG1PY8ki2LJWlhEUnVM96q8",
+    "client_name": "development",
+    "permissions": [
+      "read",
+      "snapshot",
+      "write",
+      "subscribe"
+    ],
+    "created_at": "2025-08-05T23:31:36.819611",
+    "expires_at": null,
+    "last_used": null,
+    "description": "Default development token - DELETE IN PRODUCTION"
+  },
+  "IAi3DjHfsGDfTnZK332G65nCRlgC_BGxNjjrBfQD0ZI": {
+    "token": "IAi3DjHfsGDfTnZK332G65nCRlgC_BGxNjjrBfQD0ZI",
+    "client_name": "test",
+    "permissions": [
+      "read",
+      "write"
+    ],
+    "created_at": "2025-08-05T23:31:36.819939",
+    "expires_at": null,
+    "last_used": null,
+    "description": null
+  },
+  "Y34YPUseA-9p7WV0FZkI5noLXw6xENH2hCvaWOyIb1k": {
+    "token": "Y34YPUseA-9p7WV0FZkI5noLXw6xENH2hCvaWOyIb1k",
+    "client_name": "test-client",
+    "permissions": [
+      "read",
+      "write"
+    ],
+    "created_at": "2025-08-06T00:25:17.699906",
+    "expires_at": null,
+    "last_used": "2025-08-06T00:25:17.701143",
+    "description": null
+  },
+  "W_zAjXBmwp-yL5m_I52BDImwOvmFFVerpYgq60wO4TE": {
+    "token": "W_zAjXBmwp-yL5m_I52BDImwOvmFFVerpYgq60wO4TE",
+    "client_name": "test",
+    "permissions": [
+      "read",
+      "write"
+    ],
+    "created_at": "2025-08-06T00:25:17.712925",
+    "expires_at": null,
+    "last_used": "2025-08-06T00:25:17.931357",
+    "description": null
+  }
+}
